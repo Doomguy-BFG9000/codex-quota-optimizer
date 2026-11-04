@@ -1,0 +1,6 @@
+{
+  "name": "Codex Quota Pilot — OpenAI Codex 5h & Weekly Limit Optimizer",
+  "description": "Open-source GitHub repository, MCP server, and interactive telemetry workbench enabling OpenAI Codex tasks to inspect 5-hour and weekly usage limits and dynamically optimize agentic execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

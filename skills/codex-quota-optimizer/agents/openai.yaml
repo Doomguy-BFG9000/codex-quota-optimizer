@@ -1,0 +1,8 @@
+interface:
+  display_name: "Codex Quota Optimizer"
+  short_description: "Read 5h & weekly usage limits and optimize Codex task execution"
+  default_prompt: "Use $codex-quota-optimizer to inspect my current 5-hour and weekly usage limits and optimize how you execute this task."
+  brand_color: "#2563EB"
+
+policy:
+  allow_implicit_invocation: true
