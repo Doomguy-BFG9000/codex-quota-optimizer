@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createViteServer } from 'vite';
 
 const REPO_FILE_PATHS = [
+  'README.md',
+  'CHANGELOG.md',
   'skills/codex-quota-optimizer/SKILL.md',
   'skills/codex-quota-optimizer/agents/openai.yaml',
   'skills/codex-quota-optimizer/scripts/check_quota.mjs',
@@ -13,7 +15,7 @@ const REPO_FILE_PATHS = [
   'skills/codex-quota-optimizer/scripts/mcp_server.mjs',
   'skills/codex-quota-optimizer/references/protocol_and_playbooks.md',
   'AGENTS.md',
-  'README.md',
+  'LICENSE',
   'install.sh',
   'tests/codex_skill.test.ts',
 ];
@@ -252,10 +254,11 @@ async function startServer() {
   // 2. Execute the actual Codex skill scripts on disk and return real stdout
   app.post('/api/repo/run-skill', (req, res) => {
     try {
-      const { script, fiveHourPct, weeklyPct, planType, tasksJson } = req.body || {};
+      const { script, fiveHourPct, weeklyPct, planType, taskSize, tasksJson } = req.body || {};
       const p5h = Number.isFinite(Number(fiveHourPct)) ? Number(fiveHourPct) : 32;
       const pWeekly = Number.isFinite(Number(weeklyPct)) ? Number(weeklyPct) : 41;
       const plan = ['plus', 'pro', 'team', 'enterprise'].includes(planType) ? planType : 'plus';
+      const size = ['XS', 'S', 'M', 'L', 'XL'].includes(taskSize) ? taskSize : 'M';
 
       if (script === 'optimize_work_plan.mjs') {
         const scriptPath = path.resolve(
@@ -281,13 +284,14 @@ async function startServer() {
         const args = [
           scriptPath,
           '--format=agent',
+          `--task-size=${size}`,
           `--5h=${p5h}`,
           `--weekly=${pWeekly}`,
           `--plan=${plan}`,
         ];
         const stdout = execFileSync('node', args, { encoding: 'utf8', timeout: 5000 });
         res.json({
-          command: `node skills/codex-quota-optimizer/scripts/check_quota.mjs --format=agent --5h=${p5h} --weekly=${pWeekly} --plan=${plan}`,
+          command: `node skills/codex-quota-optimizer/scripts/check_quota.mjs --format=agent --task-size=${size} --5h=${p5h} --weekly=${pWeekly} --plan=${plan}`,
           stdout,
         });
       }

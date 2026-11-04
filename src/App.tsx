@@ -65,6 +65,7 @@ export default function App() {
   const [scriptToRun, setScriptToRun] = useState<
     'check_quota.mjs' | 'optimize_work_plan.mjs'
   >('check_quota.mjs');
+  const [taskSize, setTaskSize] = useState<'XS' | 'S' | 'M' | 'L' | 'XL'>('M');
   const [fiveHourPct, setFiveHourPct] = useState<number>(86);
   const [weeklyPct, setWeeklyPct] = useState<number>(54);
   const [planType, setPlanType] = useState<'plus' | 'pro'>('plus');
@@ -163,7 +164,8 @@ export default function App() {
     targetScript = scriptToRun,
     p5h = fiveHourPct,
     pWeekly = weeklyPct,
-    plan = planType
+    plan = planType,
+    size = taskSize
   ) => {
     setRunningScript(true);
     try {
@@ -175,6 +177,7 @@ export default function App() {
           fiveHourPct: p5h,
           weeklyPct: pWeekly,
           planType: plan,
+          taskSize: size,
         }),
       });
       const data = await res.json();
@@ -188,7 +191,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    executeSkillScript('check_quota.mjs', 86, 54, 'plus');
+    executeSkillScript('check_quota.mjs', 86, 54, 'plus', 'M');
   }, []);
 
   const activeFile =
@@ -203,7 +206,7 @@ export default function App() {
 
   const codexSkillInstallCmd = publishResult?.skillInstallerCmd
     ? publishResult.skillInstallerCmd
-    : `./install.sh   # Installs skills/codex-quota-optimizer -> ~/.codex/skills/codex-quota-optimizer & updates ~/.codex/AGENTS.md`;
+    : `npx skills add Thlookingatyou/codex-quota-optimizer --skill codex-quota-optimizer`;
 
   const handleCopyInstallCmd = () => {
     navigator.clipboard?.writeText(codexSkillInstallCmd);
@@ -659,6 +662,20 @@ export default function App() {
                   className="w-16 px-2 py-1 font-mono tabular-nums bg-slate-50 border border-slate-200 rounded"
                 />
                 <select
+                  aria-label="Task Complexity Size (XS to XL)"
+                  value={taskSize}
+                  onChange={(e) =>
+                    setTaskSize(e.target.value as 'XS' | 'S' | 'M' | 'L' | 'XL')
+                  }
+                  className="px-2 py-1 font-mono bg-slate-50 border border-slate-200 rounded"
+                >
+                  <option value="XS">--task-size=XS</option>
+                  <option value="S">--task-size=S</option>
+                  <option value="M">--task-size=M</option>
+                  <option value="L">--task-size=L</option>
+                  <option value="XL">--task-size=XL</option>
+                </select>
+                <select
                   aria-label="Codex Plan Tier"
                   value={planType}
                   onChange={(e) => setPlanType(e.target.value as 'plus' | 'pro')}
@@ -670,7 +687,13 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() =>
-                    executeSkillScript(scriptToRun, fiveHourPct, weeklyPct, planType)
+                    executeSkillScript(
+                      scriptToRun,
+                      fiveHourPct,
+                      weeklyPct,
+                      planType,
+                      taskSize
+                    )
                   }
                   disabled={runningScript}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer"

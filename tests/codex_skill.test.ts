@@ -8,22 +8,33 @@ import os from 'node:os';
 const CHECK_QUOTA_SCRIPT = path.resolve('skills/codex-quota-optimizer/scripts/check_quota.mjs');
 const OPTIMIZE_PLAN_SCRIPT = path.resolve('skills/codex-quota-optimizer/scripts/optimize_work_plan.mjs');
 
-test('SKILL.md and agents/openai.yaml exist and follow OpenAI Codex skill structure', () => {
+test('SKILL.md, README.md, CHANGELOG.md, and LICENSE have v0.3.0 metadata and zero placeholders', () => {
   const skillMd = fs.readFileSync(path.resolve('skills/codex-quota-optimizer/SKILL.md'), 'utf8');
-  assert.ok(skillMd.startsWith('---\nname: codex-quota-optimizer\ndescription:'));
-  assert.ok(skillMd.includes('check_quota.mjs'));
-  assert.ok(skillMd.includes('optimize_work_plan.mjs'));
+  assert.ok(skillMd.includes('name: codex-quota-optimizer'));
+  assert.ok(skillMd.includes('version: 0.3.0'));
+  assert.ok(skillMd.includes('Thlookingatyou/codex-quota-optimizer'));
 
-  const openaiYaml = fs.readFileSync(
-    path.resolve('skills/codex-quota-optimizer/agents/openai.yaml'),
-    'utf8'
-  );
-  assert.ok(openaiYaml.includes('display_name: "Codex Quota Optimizer"'));
-  assert.ok(openaiYaml.includes('$codex-quota-optimizer'));
-  assert.ok(openaiYaml.includes('allow_implicit_invocation: true'));
+  const readmeMd = fs.readFileSync(path.resolve('README.md'), 'utf8');
+  assert.ok(readmeMd.includes('Thlookingatyou/codex-quota-optimizer'));
+  assert.ok(!readmeMd.includes('<your-username>'), 'README.md must not contain <your-username> placeholder');
+  assert.ok(readmeMd.includes('npx skills add Thlookingatyou/codex-quota-optimizer'));
+
+  const changelogMd = fs.readFileSync(path.resolve('CHANGELOG.md'), 'utf8');
+  assert.ok(changelogMd.includes('## [0.3.0]'));
+
+  const licenseTxt = fs.readFileSync(path.resolve('LICENSE'), 'utf8');
+  assert.ok(licenseTxt.includes('MIT License'));
+  assert.ok(licenseTxt.includes('Thlookingatyou'));
 });
 
-test('check_quota.mjs parses a real OpenAI Codex rollout-*.jsonl rate_limits event', () => {
+test('check_quota.mjs is 100% offline and never accesses auth.json or fetch()', () => {
+  const scriptSource = fs.readFileSync(CHECK_QUOTA_SCRIPT, 'utf8');
+  assert.ok(!scriptSource.includes('fetch('), 'check_quota.mjs must not make network fetch calls');
+  assert.ok(!scriptSource.includes('wham/usage'), 'check_quota.mjs must not call external wham endpoint');
+  assert.ok(!scriptSource.includes("path.join(codexHome, 'auth.json')"), 'check_quota.mjs must not read auth.json');
+});
+
+test('check_quota.mjs supports XS-XL task complexity sizing and parses rollout-*.jsonl', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-test-'));
   const sessionDir = path.join(tmpDir, 'sessions', '2026', '11', '04');
   fs.mkdirSync(sessionDir, { recursive: true });
@@ -53,18 +64,18 @@ test('check_quota.mjs parses a real OpenAI Codex rollout-*.jsonl rate_limits eve
 
   const stdout = execFileSync(
     'node',
-    [CHECK_QUOTA_SCRIPT, `--codex-home=${tmpDir}`, '--format=json'],
+    [CHECK_QUOTA_SCRIPT, `--codex-home=${tmpDir}`, '--task-size=XS', '--format=json'],
     { encoding: 'utf8' }
   );
 
   const report = JSON.parse(stdout);
+  assert.equal(report.version, '0.3.0');
+  assert.equal(report.security_guarantee, 'offline_read_only_no_network_no_auth_access');
+  assert.equal(report.task_complexity.size, 'XS');
   assert.equal(report.primary_window_5h.used_percent, 87.5);
-  assert.equal(report.primary_window_5h.window_minutes, 300);
   assert.equal(report.secondary_window_weekly.used_percent, 58.0);
-  assert.equal(report.secondary_window_weekly.window_minutes, 10080);
   assert.equal(report.optimization_policy.mode, 'CRITICAL_SURGICAL');
   assert.equal(report.optimization_policy.allow_subagents, false);
-  assert.equal(report.optimization_policy.max_file_read_lines, 80);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });

@@ -1,24 +1,83 @@
 #!/usr/bin/env node
 /**
- * OpenAI Codex Skill Script: check_quota.mjs
+ * OpenAI Codex Skill Script: check_quota.mjs (v0.3.0)
+ * Repository: https://github.com/Thlookingatyou/codex-quota-optimizer
  *
- * Reads both the 5-hour rolling window (`primary_window`, 300 mins) and
- * the 7-day weekly limit (`secondary_window`, 10080 mins) from:
- *   1. ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl (written by codex-core)
- *   2. https://chatgpt.com/backend-api/wham/usage (using ~/.codex/auth.json when --probe-remote is passed)
- *   3. Environment or CLI test overrides (--5h=<pct> --weekly=<pct> --plan=<plus|pro>)
- *
- * Outputs a machine-readable JSON + actionable agent directives for OpenAI Codex.
+ * SECURITY & ZERO-FRICTION GUARANTEES:
+ *   - 100% Offline & Read-Only: NEVER makes network requests and NEVER reads ~/.codex/auth.json.
+ *   - Zero Extra Model Calls: Pure deterministic calculation combining XS–XL task complexity
+ *     with local `RateLimitSnapshot` telemetry from ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl.
+ *   - Graceful Fallback: Works even when no rollout logs exist yet by falling back to XS–XL task sizing.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+export const SKILL_VERSION = '0.3.0';
+
+const TASK_SIZE_PROFILES = {
+  XS: {
+    label: 'Extra Small (1 file, <25 lines, typo/config/doc)',
+    nominalModel: 'codex-mini-latest',
+    nominalEffort: 'low',
+    conserveModel: 'codex-mini-latest',
+    conserveEffort: 'minimal',
+    criticalModel: 'codex-mini-latest',
+    criticalEffort: 'minimal',
+    baseMaxLines: 80,
+    verificationLayer: 'Layer 1 only (syntax/diff check)',
+  },
+  S: {
+    label: 'Small (1-2 files, <80 lines, isolated bugfix/helper)',
+    nominalModel: 'gpt-5-codex',
+    nominalEffort: 'low',
+    conserveModel: 'codex-mini-latest',
+    conserveEffort: 'low',
+    criticalModel: 'codex-mini-latest',
+    criticalEffort: 'low',
+    baseMaxLines: 160,
+    verificationLayer: 'Layer 1 + Layer 2 (single unit test file)',
+  },
+  M: {
+    label: 'Medium (2-4 files, 80-250 lines, standard feature/refactor)',
+    nominalModel: 'gpt-5-codex',
+    nominalEffort: 'medium',
+    conserveModel: 'gpt-5-codex-medium',
+    conserveEffort: 'low',
+    criticalModel: 'codex-mini-latest',
+    criticalEffort: 'low',
+    baseMaxLines: 300,
+    verificationLayer: 'Layer 1 + Layer 2 (affected module unit tests)',
+  },
+  L: {
+    label: 'Large (5-8 files, cross-module feature/migration)',
+    nominalModel: 'gpt-5-codex',
+    nominalEffort: 'high',
+    conserveModel: 'gpt-5-codex-medium',
+    conserveEffort: 'medium',
+    criticalModel: 'codex-mini-latest',
+    criticalEffort: 'low',
+    baseMaxLines: 400,
+    verificationLayer: 'Layer 1 + Layer 2 (defer Layer 3 full suite unless NOMINAL)',
+  },
+  XL: {
+    label: 'Extra Large (8+ files, architecture redesign / deep root-cause debug)',
+    nominalModel: 'gpt-5-codex',
+    nominalEffort: 'high',
+    conserveModel: 'gpt-5-codex-medium',
+    conserveEffort: 'medium',
+    criticalModel: 'codex-mini-latest',
+    criticalEffort: 'low',
+    baseMaxLines: 400,
+    verificationLayer: 'Phased Layer 1-2 per milestone; Layer 3 full suite only when NOMINAL',
+  },
+};
+
 function parseArgs(argv) {
   const args = {
     format: 'agent', // 'agent' | 'json'
-    probeRemote: false,
+    taskSize: (process.env.CODEX_TASK_SIZE || 'M').toUpperCase(),
     codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
     override5h: process.env.CODEX_PRIMARY_USED_PCT ? Number(process.env.CODEX_PRIMARY_USED_PCT) : null,
     overrideWeekly: process.env.CODEX_WEEKLY_USED_PCT ? Number(process.env.CODEX_WEEKLY_USED_PCT) : null,
@@ -29,8 +88,8 @@ function parseArgs(argv) {
   };
 
   for (const arg of argv.slice(2)) {
-    if (arg === '--probe-remote') args.probeRemote = true;
-    else if (arg.startsWith('--format=')) args.format = arg.split('=')[1];
+    if (arg.startsWith('--format=')) args.format = arg.split('=')[1];
+    else if (arg.startsWith('--task-size=')) args.taskSize = arg.split('=')[1].toUpperCase();
     else if (arg.startsWith('--codex-home=')) args.codexHome = arg.split('=')[1];
     else if (arg.startsWith('--rollout-file=')) args.rolloutFile = arg.split('=')[1];
     else if (arg.startsWith('--5h=')) args.override5h = Number(arg.split('=')[1]);
@@ -38,6 +97,10 @@ function parseArgs(argv) {
     else if (arg.startsWith('--5h-reset-sec=')) args.override5hResetSec = Number(arg.split('=')[1]);
     else if (arg.startsWith('--weekly-reset-sec=')) args.overrideWeeklyResetSec = Number(arg.split('=')[1]);
     else if (arg.startsWith('--plan=')) args.overridePlan = arg.split('=')[1];
+  }
+
+  if (!TASK_SIZE_PROFILES[args.taskSize]) {
+    args.taskSize = 'M';
   }
   return args;
 }
@@ -52,6 +115,11 @@ export function formatDuration(seconds) {
   return `${m}m`;
 }
 
+/**
+ * Parses a local ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl file for the latest
+ * `EventMsg::TokenCount` containing `rate_limits.primary` (300m) and `rate_limits.secondary` (10080m).
+ * Strictly offline and read-only.
+ */
 export function parseRolloutJsonlContent(content, sourcePath = 'rollout.jsonl') {
   const lines = content.trim().split('\n').reverse();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -78,6 +146,7 @@ export function parseRolloutJsonlContent(content, sourcePath = 'rollout.jsonl') 
 
         return {
           plan_type: rateLimits.plan_type || 'plus',
+          telemetry_status: 'live_local_rollout_jsonl',
           source: `rollout_jsonl (${path.basename(sourcePath)})`,
           captured_at: parsed.timestamp || new Date().toISOString(),
           primary_window: {
@@ -93,7 +162,7 @@ export function parseRolloutJsonlContent(content, sourcePath = 'rollout.jsonl') 
         };
       }
     } catch {
-      // Skip malformed line
+      // Ignore malformed JSONL lines
     }
   }
   return null;
@@ -128,47 +197,6 @@ export function findLatestRolloutSnapshot(codexHome, explicitFile = null) {
   return null;
 }
 
-async function probeWhamUsageApi(codexHome) {
-  const authFile = path.join(codexHome, 'auth.json');
-  if (!fs.existsSync(authFile)) return null;
-
-  try {
-    const auth = JSON.parse(fs.readFileSync(authFile, 'utf8'));
-    const token = auth?.tokens?.access_token || auth?.access_token;
-    if (!token) return null;
-
-    const res = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const p = data?.rate_limit?.primary_window;
-    const s = data?.rate_limit?.secondary_window;
-    if (!p) return null;
-
-    return {
-      plan_type: data?.plan_type || 'plus',
-      source: 'wham_usage_api',
-      captured_at: new Date().toISOString(),
-      primary_window: {
-        window_minutes: 300,
-        used_percent: Number(p.used_percent ?? 0),
-        resets_in_seconds: Number(p.reset_after_seconds ?? 10800),
-      },
-      secondary_window: {
-        window_minutes: 10080,
-        used_percent: Number(s?.used_percent ?? 0),
-        resets_in_seconds: Number(s?.reset_after_seconds ?? 432000),
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
 export function buildAgentQuotaReport(rawSnapshot, options = {}) {
   const warn5h = Number(options.warn5h ?? process.env.CODEX_QUOTA_FIVE_HOUR_WARN ?? 65);
   const crit5h = Number(options.crit5h ?? process.env.CODEX_QUOTA_FIVE_HOUR_CRIT ?? 85);
@@ -176,6 +204,9 @@ export function buildAgentQuotaReport(rawSnapshot, options = {}) {
   const critWeekly = Number(options.critWeekly ?? process.env.CODEX_QUOTA_WEEKLY_CRIT ?? 88);
   const reservePct = Number(options.reservePct ?? process.env.CODEX_QUOTA_RESERVE_PCT ?? 5);
   const proExempt5h = (options.proExempt5h ?? process.env.CODEX_PRO_EXEMPT_5H ?? 'true') !== 'false';
+
+  const taskSizeKey = TASK_SIZE_PROFILES[options.taskSize] ? options.taskSize : 'M';
+  const sizeProfile = TASK_SIZE_PROFILES[taskSizeKey];
 
   const plan = rawSnapshot.plan_type || 'plus';
   const isProExempt = proExempt5h && (plan === 'pro' || plan === 'enterprise');
@@ -193,17 +224,15 @@ export function buildAgentQuotaReport(rawSnapshot, options = {}) {
   const burnVelocityWeekly = Number((usedWeekly / elapsedWeeklyPct).toFixed(2));
 
   const reserveCeiling = 100 - reservePct;
-  const rem5h = isProExempt
-    ? Math.max(0, Number((reserveCeiling - used5h).toFixed(1)))
-    : Math.max(0, Number((reserveCeiling - used5h).toFixed(1)));
+  const rem5h = Math.max(0, Number((reserveCeiling - used5h).toFixed(1)));
   const remWeekly = Math.max(0, Number((reserveCeiling - usedWeekly).toFixed(1)));
 
   let mode = 'NOMINAL';
   let governingWindow = 'balanced';
-  let maxFileReadLines = 400;
-  let allowSubagents = true;
-  let recommendedReasoningEffort = 'high';
-  let recommendedModel = 'gpt-5-codex';
+  let maxFileReadLines = sizeProfile.baseMaxLines;
+  let allowSubagents = taskSizeKey === 'L' || taskSizeKey === 'XL';
+  let recommendedReasoningEffort = sizeProfile.nominalEffort;
+  let recommendedModel = sizeProfile.nominalModel;
   let testStrategy = 'full-suite';
   let heartbeatEveryTurns = 5;
   let directives = [];
@@ -225,47 +254,57 @@ export function buildAgentQuotaReport(rawSnapshot, options = {}) {
   } else if (usedWeekly >= critWeekly || (!isProExempt && used5h >= crit5h)) {
     mode = 'CRITICAL_SURGICAL';
     governingWindow = usedWeekly >= critWeekly ? 'secondary_weekly_10080m' : 'primary_5h_300m';
-    maxFileReadLines = 80;
+    maxFileReadLines = Math.min(80, sizeProfile.baseMaxLines);
     allowSubagents = false;
-    recommendedReasoningEffort = 'low';
-    recommendedModel = 'codex-mini-latest';
+    recommendedReasoningEffort = sizeProfile.criticalEffort;
+    recommendedModel = sizeProfile.criticalModel;
     testStrategy = 'typecheck-only';
     heartbeatEveryTurns = 2;
     directives = [
       'CRITICAL QUOTA: Execute P0 blocker requirements only; defer P1/P2 cleanup or secondary refactors.',
-      'Use rg -n to locate exact symbols and read <= 80 lines per file via sed -n. Never read whole files.',
+      `Use rg -n to locate exact symbols and read <= ${maxFileReadLines} lines per file via sed -n. Never read whole files.`,
       'Do NOT spawn subagents. Combine edits per file into a single patch.',
-      'Verify via fast static typecheck (tsc --noEmit) and pipe all command output through | tail -n 20.',
+      'Layered Verification: Run Layer 1 fast static typecheck (tsc --noEmit | head -n 25) and defer heavy suites.',
     ];
   } else if (usedWeekly >= warnWeekly || (!isProExempt && used5h >= warn5h)) {
     mode = 'WARNING_CONSERVE';
     governingWindow = usedWeekly >= warnWeekly ? 'secondary_weekly_10080m' : 'primary_5h_300m';
-    maxFileReadLines = 150;
+    maxFileReadLines = Math.min(150, sizeProfile.baseMaxLines);
     allowSubagents = false;
-    recommendedReasoningEffort = 'medium';
-    recommendedModel = 'gpt-5-codex-medium';
+    recommendedReasoningEffort = sizeProfile.conserveEffort;
+    recommendedModel = sizeProfile.conserveModel;
     testStrategy = 'affected-unit-tests-only';
     heartbeatEveryTurns = 3;
     directives = [
-      'WARNING QUOTA: Conserve tokens across both 5h and weekly windows.',
-      'Prefer rg -n + targeted line ranges (<= 150 lines) over full-file reads.',
+      `WARNING QUOTA (Task Size ${taskSizeKey}): Conserve tokens across both 5h and weekly windows.`,
+      `Prefer rg -n + targeted line ranges (<= ${maxFileReadLines} lines) over full-file reads.`,
       'Disable parallel subagents; execute sequentially with batched file edits.',
-      'Run unit tests only on modified modules and truncate test output (| tail -n 30).',
+      'Layered Verification: Run Layer 1 syntax check + Layer 2 modified unit test file only (| tail -n 30).',
     ];
   } else {
     mode = 'NOMINAL';
     governingWindow = !isProExempt && used5h > usedWeekly ? 'primary_5h_300m' : 'secondary_weekly_10080m';
+    if (taskSizeKey === 'XS' || taskSizeKey === 'S') {
+      testStrategy = 'affected-unit-tests-only';
+    }
     directives = [
-      'Both 5-hour and weekly windows have comfortable headroom.',
-      'Full agentic exploration, subagent delegation, and complete test suite verification permitted.',
-      `Re-check quota via check_quota.mjs after ${heartbeatEveryTurns} tool turns.`,
+      `Nominal quota headroom for Task Size ${taskSizeKey} (${sizeProfile.label}).`,
+      `Recommended routing: model=${recommendedModel}, reasoning_effort=${recommendedReasoningEffort}, max_file_read_lines=${maxFileReadLines}.`,
+      `Layered Verification: ${sizeProfile.verificationLayer}.`,
     ];
   }
 
   return {
     skill: 'codex-quota-optimizer',
+    version: SKILL_VERSION,
+    security_guarantee: 'offline_read_only_no_network_no_auth_access',
     plan_type: plan,
     pro_exempt_5h: isProExempt,
+    task_complexity: {
+      size: taskSizeKey,
+      description: sizeProfile.label,
+      verification_layer: sizeProfile.verificationLayer,
+    },
     source: rawSnapshot.source,
     captured_at: rawSnapshot.captured_at,
     primary_window_5h: {
@@ -298,19 +337,19 @@ export function buildAgentQuotaReport(rawSnapshot, options = {}) {
   };
 }
 
-async function main() {
+function main() {
   const args = parseArgs(process.argv);
 
   let snapshot = findLatestRolloutSnapshot(args.codexHome, args.rolloutFile);
 
-  if (!snapshot && args.probeRemote) {
-    snapshot = await probeWhamUsageApi(args.codexHome);
-  }
-
   if (!snapshot) {
     snapshot = {
       plan_type: args.overridePlan || 'plus',
-      source: args.override5h !== null || args.overrideWeekly !== null ? 'cli_or_env_override' : 'default_baseline (no ~/.codex/sessions rollout found)',
+      telemetry_status: args.override5h !== null || args.overrideWeekly !== null ? 'cli_or_env_override' : 'heuristic_fallback_no_rollout_log',
+      source:
+        args.override5h !== null || args.overrideWeekly !== null
+          ? 'cli_or_env_override'
+          : 'default_baseline (no ~/.codex/sessions rollout found; using XS-XL heuristic sizing)',
       captured_at: new Date().toISOString(),
       primary_window: {
         window_minutes: 300,
@@ -331,7 +370,7 @@ async function main() {
     if (args.overridePlan !== null) snapshot.plan_type = args.overridePlan;
   }
 
-  const report = buildAgentQuotaReport(snapshot);
+  const report = buildAgentQuotaReport(snapshot, { taskSize: args.taskSize });
 
   if (args.format === 'json') {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
@@ -341,14 +380,16 @@ async function main() {
   const p = report.primary_window_5h;
   const s = report.secondary_window_weekly;
   const pol = report.optimization_policy;
+  const tc = report.task_complexity;
 
   const banner = [
     '================================================================================',
-    `[CODEX QUOTA OPTIMIZER] MODE: ${pol.mode} | PLAN: ${report.plan_type.toUpperCase()}`,
+    `[CODEX QUOTA OPTIMIZER v${SKILL_VERSION}] MODE: ${pol.mode} | TASK SIZE: ${tc.size} | PLAN: ${report.plan_type.toUpperCase()}`,
+    `  • Security & Friction:     100% Offline Read-Only | Zero Network Calls | Zero Extra LLM Calls`,
     `  • 5-Hour Window (300m):    ${p.used_percent}% used (${p.remaining_effective_percent}% usable left) | Resets in ${p.resets_in_human} | Velocity: ${p.burn_velocity_ratio}x`,
     `  • Weekly Limit  (10080m):  ${s.used_percent}% used (${s.remaining_effective_percent}% usable left) | Resets in ${s.resets_in_human} | Velocity: ${s.burn_velocity_ratio}x`,
+    `  • Task Routing (${tc.size}):       model=${pol.recommended_model} | reasoning_effort=${pol.recommended_reasoning_effort}`,
     `  • Agent Constraints:       max_file_read_lines=${pol.max_file_read_lines} | allow_subagents=${pol.allow_subagents} | test_strategy=${pol.test_strategy}`,
-    `  • Recommended Config:      model=${pol.recommended_model} | reasoning_effort=${pol.recommended_reasoning_effort}`,
     '  • Mandatory Directives for Codex:',
     ...pol.mandatory_directives.map((d, i) => `      ${i + 1}. ${d}`),
     '================================================================================',
@@ -358,7 +399,9 @@ async function main() {
   process.stdout.write(banner + '\n');
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+const isMain =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
 if (isMain) {
   main();
 }
