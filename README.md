@@ -2,7 +2,30 @@
 
 Offline Codex quota observations and a deterministic task scheduler. The skill reads local rollout logs without network requests, credentials, or extra model calls. The optional web app is a simulator, not a live quota monitor.
 
-## Install
+[![Tests](https://github.com/Thlookingatyou/codex-quota-optimizer/actions/workflows/test.yml/badge.svg)](https://github.com/Thlookingatyou/codex-quota-optimizer/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**See quota uncertainty before planning your next Codex task.** Read local observations, get task-sizing guidance, and see which estimated tasks fit below a 95% ceiling.
+
+**Early project: real-world quota savings have not been measured.** The tests verify telemetry handling and scheduling behavior. The tool cannot increase your allowance, enforce server limits, or automatically change your active model.
+
+![Generated terminal preview showing fresh, near-reserve, missing, stale, and stopped states with synthetic inputs](docs/assets/demo.svg)
+
+*Reproduce this preview with `npm run demo`. These are synthetic inputs, not a recording of measured quota savings. [Plain-text output and explanation](docs/DEMO.md).*
+
+## Try it before installing the skill
+
+With Node.js 22.12 or later:
+
+```sh
+git clone https://github.com/Thlookingatyou/codex-quota-optimizer.git
+cd codex-quota-optimizer
+node scripts/demo.mjs
+```
+
+No `npm install`, API key, or Codex account is needed for this demonstration. It checks five behaviors using a fixed clock and synthetic observations. It neither reads your sessions nor installs or configures a skill.
+
+## Install in about 30 seconds
 
 Node.js 22.12 or later is required. The skill itself has no npm dependencies.
 
@@ -11,6 +34,35 @@ npx skills add Thlookingatyou/codex-quota-optimizer --skill codex-quota-optimize
 ```
 
 Or clone this repository and run `bash install.sh`. This copies the skill into `${CODEX_HOME:-$HOME/.codex}/skills`, appends the repository's lifecycle instructions to global `AGENTS.md` if absent, and registers the optional local MCP server in `config.toml`. Review these files before installing. Windows users can use Git Bash, or copy `skills/codex-quota-optimizer` into their Codex skills directory manually.
+
+## A first real usage example
+
+From a clone, inspect your available local observations:
+
+```sh
+node skills/codex-quota-optimizer/scripts/check_quota.mjs --task-size=M --format=json
+```
+
+This command only reads local logs. If both windows have usable observations, it reports their usage and a policy such as `NOMINAL` or `WARNING_CONSERVE`. If either window is missing or stale, expect `TELEMETRY_UNKNOWN` and `null` headroom rather than sample percentages. Use the installed skill's script path after installation.
+
+For example, the synthetic demo starts at 91.4% 5h usage. A 10-point task assigned the minimal .38 multiplier would end at 95.2%, so the scheduler defers it. This illustrates a reserve decision; it does not measure actual consumption.
+
+## Limitations and evidence
+
+- **Savings are unmeasured.** Cost multipliers and model routing are heuristics. Fewer scheduled tasks are not evidence that completing the same work consumes less quota. See the [benchmark protocol](docs/BENCHMARK.md).
+- **Local observations can be absent, delayed, rounded, or stale.** Log formats and account limits may change. A passed reset time does not prove usage returned to zero.
+- **95% is a projection ceiling.** Incorrect estimates or other sessions can still exhaust your allowance. The skill offers advice; it cannot enforce a server-side quota.
+- **No automatic model switching.** Check model availability in your own client. The optional web app is a simulator.
+- **Installation has distinct scopes.** The demo writes no settings. `bash install.sh` changes the global skill, instructions, and MCP registration as described above; the `npx skills` route uses that installer's scope choices.
+
+## Help test or improve it
+
+Try the demo, then tell us whether real local telemetry is available on your platform. Useful feedback includes the exact command, expected result, actual result, OS, Node and Codex versions. Share only a small, redacted rate-limit event; full rollout logs may contain prompts, paths, and confidential content.
+
+- [Report a bug or suggest an improvement](https://github.com/Thlookingatyou/codex-quota-optimizer/issues/new/choose).
+- [Find a good first issue](https://github.com/Thlookingatyou/codex-quota-optimizer/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, contribution scope, and pull-request guidance.
+- Submit a reproducible measurement using the [benchmark protocol](docs/BENCHMARK.md), including negative or inconclusive results.
 
 ## Read telemetry
 

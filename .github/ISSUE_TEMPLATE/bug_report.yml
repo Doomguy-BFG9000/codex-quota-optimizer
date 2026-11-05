@@ -1,0 +1,41 @@
+name: Bug report
+description: Report incorrect telemetry handling, scheduling, installation, or output.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Please search existing issues first. Share only minimal redacted rate-limit events; never paste full rollout logs, credentials, or auth.json."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, Codex client/version, project commit or version, and install method. No account identifiers needed.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and exact command
+      description: Give the smallest reproduction, preferably with synthetic inputs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and redacted output
+      description: Note whether telemetry was missing, stale, partial, or fresh. Include errors and exit status if available.
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal synthetic or redacted event (optional)
+      description: Include timestamp and rate_limits only; remove prompts, private paths, IDs, and secrets.
+      render: json
