@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="686" viewBox="0 0 1120 686" role="img" aria-labelledby="title desc">
+<title id="title">Offline quota behavior demonstration</title>
+<desc id="desc">Generated terminal preview with synthetic inputs: fresh, near-reserve, missing, stale, and stopped quota states. This is not a savings benchmark.</desc>
+<rect width="1120" height="686" rx="14" fill="#0f172a"/>
+<path d="M0 44H1120" stroke="#334155"/>
+<circle cx="28" cy="23" r="6" fill="#fb7185"/><circle cx="49" cy="23" r="6" fill="#fbbf24"/><circle cx="70" cy="23" r="6" fill="#4ade80"/>
+<g font-family="Consolas, Menlo, monospace" font-size="17"><text x="28" y="78" fill="#f8fafc" xml:space="preserve">codex-quota-optimizer | reproducible behavior demo</text>
+<text x="28" y="103" fill="#f8fafc" xml:space="preserve">Synthetic inputs. No Codex calls, local sessions, or credentials.</text>
+<text x="28" y="128" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="153" fill="#f8fafc" xml:space="preserve">Fresh observation</text>
+<text x="28" y="178" fill="#cbd5e1" xml:space="preserve">  5h 32% | weekly 41% | NOMINAL</text>
+<text x="28" y="203" fill="#cbd5e1" xml:space="preserve">  EXECUTE_FULL | projected 5h 40.8%</text>
+<text x="28" y="228" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="253" fill="#f8fafc" xml:space="preserve">Too close to reserve</text>
+<text x="28" y="278" fill="#cbd5e1" xml:space="preserve">  5h 91.4% | weekly 58% | CRITICAL_SURGICAL</text>
+<text x="28" y="303" fill="#cbd5e1" xml:space="preserve">  DEFER_UNTIL_RESET | projected 5h 91.4%</text>
+<text x="28" y="328" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="353" fill="#f8fafc" xml:space="preserve">Missing telemetry</text>
+<text x="28" y="378" fill="#cbd5e1" xml:space="preserve">  5h unknown | weekly unknown | TELEMETRY_UNKNOWN</text>
+<text x="28" y="403" fill="#cbd5e1" xml:space="preserve">  DEFER_UNTIL_RESET | projected 5h unknown</text>
+<text x="28" y="428" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="453" fill="#f8fafc" xml:space="preserve">Stale observation</text>
+<text x="28" y="478" fill="#cbd5e1" xml:space="preserve">  5h unknown | weekly unknown | TELEMETRY_UNKNOWN</text>
+<text x="28" y="503" fill="#cbd5e1" xml:space="preserve">  DEFER_UNTIL_RESET | projected 5h unknown</text>
+<text x="28" y="528" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="553" fill="#f8fafc" xml:space="preserve">Reserve reached</text>
+<text x="28" y="578" fill="#cbd5e1" xml:space="preserve">  5h 95% | weekly 58% | RESERVE_STOP</text>
+<text x="28" y="603" fill="#cbd5e1" xml:space="preserve">  DEFER_UNTIL_RESET | projected 5h 95%</text>
+<text x="28" y="628" fill="#f8fafc" xml:space="preserve"></text>
+<text x="28" y="653" fill="#86efac" xml:space="preserve">PASS: all 5 behavior checks. Actual quota savings: not measured.</text></g>
+</svg>
