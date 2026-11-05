@@ -1,6 +1,6 @@
 # Try the skill from PowerShell on Windows
 
-The reader and the demo below need Git and Node.js 22.12 or later. They run
+The snippets below require PowerShell 7, Git, and Node.js 22.12 or later. They run
 directly from a disposable checkout, without installing the skill.
 
 These commands were verified in a disposable checkout on Windows 11 Home Single
@@ -11,6 +11,10 @@ manual demo inputs, and a missing-file response.
 ## Check Node and clone
 
 ```powershell
+$PSVersionTable.PSVersion
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw 'Open PowerShell 7 before continuing.'
+}
 node --version
 git --version
 if ([version]((node --version).TrimStart('v')) -lt [version]'22.12.0') {
