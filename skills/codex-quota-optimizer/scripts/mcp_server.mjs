@@ -6,9 +6,7 @@
  */
 
 import readline from 'node:readline';
-import os from 'node:os';
-import path from 'node:path';
-import { findLatestRolloutSnapshot, buildAgentQuotaReport } from './check_quota.mjs';
+import { loadQuotaReport } from './check_quota.mjs';
 import { scheduleTasksAgainstQuota } from './optimize_work_plan.mjs';
 
 const rl = readline.createInterface({
@@ -23,8 +21,9 @@ function respond(id, result) {
 
 rl.on('line', (line) => {
   if (!line.trim()) return;
+  let req;
   try {
-    const req = JSON.parse(line);
+    req = JSON.parse(line);
     if (req.method === 'initialize') {
       respond(req.id, {
         protocolVersion: '2024-11-05',
@@ -67,28 +66,22 @@ rl.on('line', (line) => {
         ],
       });
     } else if (req.method === 'tools/call') {
-      const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-      const snapshot = findLatestRolloutSnapshot(codexHome) || {
-        plan_type: 'plus',
-        source: 'default_baseline',
-        captured_at: new Date().toISOString(),
-        primary_window: { window_minutes: 300, used_percent: 32, resets_in_seconds: 10800 },
-        secondary_window: { window_minutes: 10080, used_percent: 41, resets_in_seconds: 388800 },
-      };
-      const report = buildAgentQuotaReport(snapshot);
+      const report = loadQuotaReport([process.execPath, process.argv[1]]);
 
       if (req.params?.name === 'optimize_codex_task_plan') {
         const plan = scheduleTasksAgainstQuota(req.params?.arguments?.tasks || [], report);
         respond(req.id, {
           content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }],
         });
-      } else {
+      } else if (req.params?.name === 'get_codex_usage_limits') {
         respond(req.id, {
           content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
         });
+      } else {
+        throw new Error('Unknown tool');
       }
     }
-  } catch {
-    // Ignore malformed JSON-RPC line
+  } catch (error) {
+    if (req?.id !== undefined) respond(req.id, { isError: true, content: [{type: 'text', text: error.message}] });
   }
 });

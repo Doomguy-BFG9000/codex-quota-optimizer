@@ -63,7 +63,7 @@ const PRESET_SCENARIOS: PresetScenario[] = [
   {
     id: '5h-crunch',
     label: '5h Window Crunch (88% / 46%)',
-    description: 'Approaching 5-hour burst ceiling; routes to codex-mini-latest & surgical diffs.',
+    description: 'Approaching 5-hour burst ceiling; routes to gpt-6-luna & surgical diffs.',
     plan: 'plus',
     fiveHourPct: 88,
     fiveHourResetSec: 4200,
@@ -82,8 +82,8 @@ const PRESET_SCENARIOS: PresetScenario[] = [
   },
   {
     id: 'pro-exempt',
-    label: 'Pro Tier 5h Exempt (92% / 74%)',
-    description: 'Pro tier bypasses 5-hour burst lockouts while respecting weekly warning threshold.',
+    label: 'Pro Reported Limits (92% / 74%)',
+    description: 'Reported limits apply to every plan, including Pro.',
     plan: 'pro',
     fiveHourPct: 92,
     fiveHourResetSec: 3600,
@@ -692,7 +692,8 @@ export const QuotaSimulatorView: React.FC<QuotaSimulatorViewProps> = ({
                 <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={thresholds.proExemptFiveHour}
+                    disabled
+                    checked={false}
                     onChange={(e) =>
                       onChangeThresholds({
                         ...thresholds,
@@ -702,7 +703,7 @@ export const QuotaSimulatorView: React.FC<QuotaSimulatorViewProps> = ({
                     className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
                   <span>
-                    Exempt <strong>Pro / Enterprise</strong> plans from 5-hour primary window throttling (track weekly cap only)
+                    Reported 5-hour and weekly limits apply to <strong>all plans</strong>
                   </span>
                 </label>
 

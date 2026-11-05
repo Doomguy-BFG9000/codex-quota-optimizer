@@ -114,7 +114,7 @@ export const TaskOptimizerView: React.FC<TaskOptimizerViewProps> = ({
               </span>
               ) and 7-day weekly cap. Automatically compacts context, routes P1/P2 tasks to{' '}
               <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
-                codex-mini-latest
+                gpt-6-luna
               </code>
               , or defers non-critical work before hitting HTTP 429.
             </p>

@@ -64,7 +64,7 @@ test('evaluateQuotaPolicy returns nominal high-reasoning policy when both 5h and
   const policy = evaluateQuotaPolicy(baseSnapshot, DEFAULT_THRESHOLDS);
   assert.equal(policy.constraintState, 'nominal');
   assert.equal(policy.reasoningEffort, 'high');
-  assert.equal(policy.recommendedModel, 'gpt-5-codex');
+  assert.equal(policy.recommendedModel, 'gpt-6.1-sol');
   assert.equal(policy.effectiveFiveHourRemainingPct, 67); // 100 - 28 - 5 reserve
   assert.equal(policy.effectiveWeeklyRemainingPct, 61); // 100 - 34 - 5 reserve
 });
@@ -81,11 +81,11 @@ test('evaluateQuotaPolicy triggers 5h-critical when 5-hour window exceeds critic
   assert.equal(policy.constraintState, '5h-critical');
   assert.equal(policy.governingWindow, 'primary_5h');
   assert.equal(policy.reasoningEffort, 'low');
-  assert.equal(policy.recommendedModel, 'codex-mini-latest');
+  assert.equal(policy.recommendedModel, 'gpt-6-luna');
   assert.ok(policy.estimatedQuotaSavingsPct >= 60);
 });
 
-test('evaluateQuotaPolicy respects Pro tier 5-hour exemption while still enforcing weekly cap', () => {
+test('evaluateQuotaPolicy enforces reported Pro 5-hour limits', () => {
   const proSnapshot: CodexRateLimitSnapshot = {
     ...baseSnapshot,
     plan_type: 'pro',
@@ -99,10 +99,10 @@ test('evaluateQuotaPolicy respects Pro tier 5-hour exemption while still enforci
     },
   };
   const policy = evaluateQuotaPolicy(proSnapshot, DEFAULT_THRESHOLDS);
-  // 5h is ignored on Pro when proExemptFiveHour is true, so weekly warning (76% >= 70%) governs
-  assert.equal(policy.constraintState, 'weekly-warning');
-  assert.equal(policy.governingWindow, 'secondary_weekly');
-  assert.equal(policy.reasoningEffort, 'medium');
+  // A plan label does not exempt a reported 5h limit.
+  assert.equal(policy.constraintState, '5h-critical');
+  assert.equal(policy.governingWindow, 'primary_5h');
+  assert.equal(policy.reasoningEffort, 'low');
 });
 
 test('optimizeTaskQueue reduces quota burn and defers tasks that would breach the 5-hour reserve', () => {
@@ -123,4 +123,15 @@ test('formatDurationSeconds formats days, hours, and minutes accurately', () => 
   assert.equal(formatDurationSeconds(12600), '3h 30m');
   assert.equal(formatDurationSeconds(410400), '4d 18h 0m');
   assert.equal(formatDurationSeconds(540), '9m');
+});
+
+test('optimizeTaskQueue checks selected cost against both reserves', () => {
+  for (const five of [0, 64.9, 84.9, 91.4, 94.9, 95]) for (const weekly of [0, 69.9, 87.9, 90, 91.4, 95]) {
+    const snapshot = { ...baseSnapshot, plan_type: 'pro' as const, primary_window: {...baseSnapshot.primary_window, used_percent:five}, secondary_window:{...baseSnapshot.secondary_window,used_percent:weekly} };
+    const result = optimizeTaskQueue(sampleTasks, snapshot, {...DEFAULT_THRESHOLDS, proExemptFiveHour:true});
+    assert.ok(result.projectedFiveHourEndPct <= 95);
+    assert.ok(result.projectedWeeklyEndPct <= 95);
+    for (const item of result.items) if (!item.willFitCurrentWindow) { assert.equal(item.optimizedFiveHourCostPct,0); assert.equal(item.optimizedWeeklyCostPct,0); }
+  }
+  assert.throws(() => optimizeTaskQueue([{...sampleTasks[0],baseWeeklyCostPct:-1}],baseSnapshot));
 });

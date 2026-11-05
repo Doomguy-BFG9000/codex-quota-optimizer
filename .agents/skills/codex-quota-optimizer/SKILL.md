@@ -3,96 +3,51 @@ name: codex-quota-optimizer
 version: 0.3.0
 author: Thlookingatyou
 repository: https://github.com/Thlookingatyou/codex-quota-optimizer
-description: Zero-friction quota optimizer for OpenAI Codex that combines XS–XL task complexity classification and layered verification with offline local reading of Codex's 5-hour rolling window (primary_window, 300m) and 7-day weekly limit (secondary_window, 10080m) from ~/.codex/sessions/**/rollout-*.jsonl. Zero extra model calls, zero network requests, and zero credential access.
+description: Read offline Codex 5-hour and weekly quota observations, classify XS-XL tasks, and schedule work while preserving a 95% ceiling. Missing or stale telemetry remains unknown.
 ---
 
-# Codex Quota Optimizer (`$codex-quota-optimizer` v0.3.0)
+# Codex Quota Optimizer
 
-This skill minimizes avoidable token burn and prevents mid-task `HTTP 429 Too Many Requests` lockouts in **OpenAI Codex** by combining two complementary signals:
-1. **Task Complexity Classification (`XS` to `XL`)**: Matches the task's actual change surface to the minimum sufficient model and reasoning effort.
-2. **Offline Dual-Window Telemetry (`5h` & `Weekly`)**: Reads `payload.rate_limits.primary` (`window_minutes: 300`) and `payload.rate_limits.secondary` (`window_minutes: 10080`) from local `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` logs written by `codex-core`.
+Use deterministic local scripts; no network, credentials, or extra model calls.
 
----
+1. Read both quota windows before planning work:
 
-## Core Design Principles (Zero-Friction & Auditable Security)
-
-1. **Zero Extra Model Calls**: This skill uses deterministic local heuristics and never invokes secondary LLM calls.
-2. **Zero Network Requests & Zero Credential Access**: Scripts are **100% offline and read-only**. They NEVER read `~/.codex/auth.json` and NEVER make outbound HTTP requests.
-3. **Non-Blocking Execution**: This skill does not block normal development with rigid budget gates. Instead, it dynamically narrows context reading and verification scope as your 5-hour or weekly window tightens, only recommending a clean checkpoint handoff when usage reaches `>= 95%`.
-4. **Graceful Telemetry Fallback**: If `~/.codex/sessions/` has no rollout logs (e.g., fresh install or ephemeral container), the optimizer seamlessly falls back to pure **XS–XL Task Complexity Sizing**.
-
----
-
-## Step 1: Classify the Task (`XS`–`XL`) & Read Local Quota Telemetry
-
-At the start of a task, classify its complexity (`XS`, `S`, `M`, `L`, or `XL`) and run `check_quota.mjs`:
-
-```bash
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/codex-quota-optimizer"
-[ ! -d "$SKILL_DIR" ] && SKILL_DIR="./skills/codex-quota-optimizer"
-node "$SKILL_DIR/scripts/check_quota.mjs" --task-size=M --format=agent
+```sh
+node skills/codex-quota-optimizer/scripts/check_quota.mjs --task-size=M --format=agent
 ```
 
-### Task Complexity Definitions (`XS` – `XL`)
+For an installed skill, substitute its directory. `CODEX_HOME` selects the telemetry directory. `--codex-home=` and `--rollout-file=` allow isolated fixture testing. Explicit overrides (`--5h=`, `--weekly=`) are manual simulations.
 
-| Size | Scope & Surface Area | Baseline Model & Reasoning (Nominal Quota) | Quota-Constrained Shift (`5h >= 65%` or `Weekly >= 70%`) |
-| :--- | :--- | :--- | :--- |
-| **`XS`** | Typo fix, config value, rename, single-function doc (`1 file`, `< 25 lines`) | `codex-mini-latest` · `reasoning_effort="low"` | `codex-mini-latest` · `reasoning_effort="minimal"` · Read `<= 60 lines` |
-| **`S`** | Isolated bugfix, small helper, unit test addition (`1–2 files`, `< 80 lines`) | `gpt-5-codex` · `reasoning_effort="low"` | `codex-mini-latest` · `reasoning_effort="low"` · Read `<= 100 lines` |
-| **`M`** | Standard feature or refactor across a module (`2–4 files`, `80–250 lines`) | `gpt-5-codex` · `reasoning_effort="medium"` | `gpt-5-codex` · `reasoning_effort="low"` · Read `<= 150 lines` |
-| **`L`** | Cross-module feature, API + UI integration, schema migration (`5–8 files`) | `gpt-5-codex` · `reasoning_effort="medium"` / `"high"` | `gpt-5-codex` · `reasoning_effort="medium"` · Disable subagents |
-| **`XL`** | Architectural redesign, deep concurrency/root-cause debugging (`8+ files`) | `gpt-5-codex` · `reasoning_effort="high"` | Decompose into `M`-sized phases; checkpoint after each phase |
+2. Classify the change and choose a model available in the current client. Project defaults, checked against [official OpenAI documentation](https://learn.chatgpt.com/docs/models?surface=cli) on November 5, 2026:
 
----
+| Size | Scope | Model | Reasoning |
+| --- | --- | --- | --- |
+| XS | Typo, config, doc | gpt-6-luna | high |
+| S | Isolated helper or bugfix | gpt-6-luna | high |
+| M | Module feature/refactor | gpt-6.1-sol | medium |
+| L | Cross-module change | gpt-6.1-sol | medium |
+| XL | Architecture/deep debugging | gpt-6.1-sol | high |
 
-## Step 2: Enforce Focused Context & Minimal Change Surfaces
+These recommendations do not switch models or promise savings. Model and reasoning are separate settings. Use task complexity and supported options when adjusting effort.
 
-Regardless of quota state, eliminate avoidable context bloat on every turn:
+3. Follow the reported mode:
 
-1. **Locate Before Reading (`rg` -> `sed`)**:
-   - Do not dump entire large files into context just to find a symbol.
-   - Run `rg -n "SymbolName" src/` first, then read only the relevant slice with `sed -n 'Start,Endp' file` (respecting `max_file_read_lines` from `check_quota.mjs`).
-2. **Single-Pass Batched Edits**:
-   - Plan all edits to a file before writing, and apply them in one contiguous patch rather than 4–5 incremental trial-and-error turns.
-3. **Subagent Discipline**:
-   - Only spawn parallel exploration subagents on `L`/`XL` tasks when `allow_subagents=true` (`NOMINAL` quota). When `5h >= 65%` or `weekly >= 70%`, run sequentially.
+- `NOMINAL`: inspect relevant modules, verify affected behavior; recheck every five turns.
+- `WARNING_CONSERVE` (5h >=65% or weekly >=70%): focused reads up to 150 lines, sequential edits and affected tests.
+- `CRITICAL_SURGICAL` (5h >=85% or weekly >=88%): focused reads up to 80 lines, prioritize blockers; record deferred verification.
+- `RESERVE_STOP` (either window >=95%, or a stricter configured reserve): stop starting work and write `CODEX_CHECKPOINT.md` with remaining steps and known reset times.
+- `TELEMETRY_UNKNOWN`: continue task sizing and necessary development using user instructions; do not claim quota headroom or quota-safe execution. The budget scheduler defers until both windows are known.
 
----
+Observations older than 15 minutes, invalid timestamps, expired resets, wrong window durations, and missing values are unknown/stale. Never infer zero usage from a missing window or elapsed reset. Reset countdowns are aged from event time. A Pro/Enterprise label does not exempt a reported window.
 
-## Step 3: Layered Verification (Cheapest Signal First)
+4. For three or more deliverables, schedule tasks:
 
-Never run an expensive full-repository test suite or browser E2E harness as your first check. Always verify in layers and stop at the earliest failing layer:
-
-- **Layer 1 — Fast Static / Syntax Check (Always Run First)**:
-  Run a targeted typecheck or syntax check on touched files and cap output:
-  ```bash
-  npx tsc --noEmit 2>&1 | head -n 25
-  ```
-- **Layer 2 — Targeted Unit Test (Default for `S`, `M`, `L` Tasks)**:
-  Run only the unit test file corresponding to the modified module and truncate verbose passing logs:
-  ```bash
-  npx tsx --test path/to/changed.test.ts 2>&1 | tail -n 25
-  ```
-- **Layer 3 — Full Suite / Integration Verification (Gated)**:
-  Run full workspace suites only on `L`/`XL` tasks when `optimization_policy.mode === "NOMINAL"` and Layers 1–2 have already passed. In `CRITICAL_SURGICAL` mode (`5h >= 85%` or `weekly >= 88%`), skip Layer 3 and note it for post-reset execution.
-
----
-
-## Step 4: Multi-Step Work Plan Scheduling (`optimize_work_plan.mjs`)
-
-For tasks with 3+ distinct deliverables, run `optimize_work_plan.mjs` to rank P0 blockers ahead of P1/P2 work and assign each step an execution tier (`EXECUTE_FULL`, `EXECUTE_COMPACT`, `EXECUTE_MINIMAL_DIFF`, or `DEFER_UNTIL_RESET`):
-
-```bash
-node "$SKILL_DIR/scripts/optimize_work_plan.mjs" \
-  --tasks='[
-    {"id":"1","title":"Fix P0 null pointer in parser","priority":"P0","size":"S","est_5h_pct":6},
-    {"id":"2","title":"Update CLI flags and help text","priority":"P1","size":"M","est_5h_pct":10},
-    {"id":"3","title":"Refactor legacy test fixtures","priority":"P2","size":"L","est_5h_pct":16}
-  ]'
+```sh
+node skills/codex-quota-optimizer/scripts/optimize_work_plan.mjs --tasks='[{"title":"Fix parser","priority":"P0","est_5h_pct":6,"est_weekly_pct":2}]'
 ```
 
----
+The scheduler checks rounded selected costs against both windows, defers work that exceeds the reserve, and records zero burn for deferred tasks. Estimates are illustrative; recheck telemetry between steps.
 
-## References
+Locate symbols with `rg` before reading files, batch related edits, and verify syntax before affected tests. Run all checks explicitly requested by the user. Do not spawn subagents unless independently authorized.
 
-For details on `openai/codex` `RateLimitSnapshot` JSONL encoding and low-token shell one-liners, see [`references/protocol_and_playbooks.md`](references/protocol_and_playbooks.md).
+See [protocol and playbooks](references/protocol_and_playbooks.md). The README documents CLI inputs, packaging, fixtures, and limitations.

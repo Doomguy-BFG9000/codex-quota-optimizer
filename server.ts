@@ -436,18 +436,6 @@ async function startServer() {
     }
   });
 
-  // Auto-publish on startup if GITHUB_TOKEN is already present in environment
-  const initialToken = getActiveGitHubToken();
-  if (initialToken) {
-    publishPublicGitHubRepository(initialToken)
-      .then((r) => {
-        console.log(`Auto-published public GitHub repository: ${r.repoUrl}`);
-      })
-      .catch((e) => {
-        console.warn('Auto-publish skipped:', e.message);
-      });
-  }
-
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -457,7 +445,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (_req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

@@ -40,7 +40,7 @@ test('check_quota.mjs supports XS-XL task complexity sizing and parses rollout-*
   fs.mkdirSync(sessionDir, { recursive: true });
 
   const rolloutLine = JSON.stringify({
-    timestamp: '2026-11-04T14:22:19.401Z',
+    timestamp: new Date().toISOString(),
     type: 'event_msg',
     payload: {
       type: 'token_count',

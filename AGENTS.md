@@ -21,3 +21,7 @@ Always use the `$codex-quota-optimizer` skill (`skills/codex-quota-optimizer/SKI
    - **`WARNING_CONSERVE` (`5h 65%–84%` or `weekly 70%–87%`)**: Disable subagents (`allow_subagents=false`). Locate symbols with `rg -n` and read `<= 150 lines` via `sed -n`. Batch edits per file into a single turn. Run only modified unit test files and pipe output through `| tail -n 30`. Re-check quota every 3 tool turns.
    - **`CRITICAL_SURGICAL` (`5h 85%–94%` or `weekly 88%–94%`)**: Execute P0 blockers only; defer P1/P2 cleanup. Read `<= 80 lines` per file. Verify via `tsc --noEmit 2>&1 | head -n 25` instead of full test suites. Re-check quota every 2 tool turns.
    - **`RESERVE_STOP` (`5h >= 95%` or `weekly >= 95%`)**: Stop before triggering `HTTP 429 Too Many Requests`. Leave all edited files syntactically valid, write `CODEX_CHECKPOINT.md` with exact remaining steps and reset countdowns, and exit cleanly.
+
+## Telemetry uncertainty
+
+Run `TELEMETRY_UNKNOWN` as task-sizing guidance only. Missing or stale observations do not authorize claiming nominal quota or numerical headroom. The scheduler defers budgeted work until both windows are known. Continue user-authorized development and explicitly requested verification; report uncertainty. A known reserve stop still governs a missing other window. Reported limits apply to every plan.
