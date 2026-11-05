@@ -4,21 +4,24 @@
  *
  * Accepts a JSON array of subtasks that Codex plans to execute and schedules/throttles
  * each subtask against the remaining 5-hour (`primary_window`) and 7-day weekly
- * (`secondary_window`) quota so Codex never triggers HTTP 429 mid-task.
+ * (`secondary_window`) quota using estimated costs; actual server limits may differ.
  */
 
 import path from 'node:path';
-import os from 'node:os';
-import { findLatestRolloutSnapshot, buildAgentQuotaReport } from './check_quota.mjs';
+import { fileURLToPath } from 'node:url';
+import { loadQuotaReport } from './check_quota.mjs';
 
 export function scheduleTasksAgainstQuota(tasks, quotaReport) {
-  const reserveCeiling = 95;
-  const isProExempt = quotaReport.pro_exempt_5h;
+  const ceiling = quotaReport.reserve_ceiling_percent;
+  const reserveCeiling = Number.isFinite(ceiling) ? Math.min(95, Math.max(0, ceiling)) : 95;
+  const isProExempt = false;
 
   let running5h = quotaReport.primary_window_5h.used_percent;
   let runningWeekly = quotaReport.secondary_window_weekly.used_percent;
   const baseMode = quotaReport.optimization_policy.mode;
 
+  if (!Array.isArray(tasks)) throw new Error('Tasks must be an array');
+  const telemetryUnknown = !Number.isFinite(running5h) || !Number.isFinite(runningWeekly);
   const priorityRank = { P0: 0, P1: 1, P2: 2 };
   const sorted = [...tasks].sort(
     (a, b) => (priorityRank[a.priority] ?? 1) - (priorityRank[b.priority] ?? 1)
@@ -30,6 +33,7 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
   const schedule = sorted.map((t, index) => {
     const base5h = Number(t.est_5h_pct ?? 10);
     const baseWeekly = Number(t.est_weekly_pct ?? (base5h * 0.24).toFixed(1));
+    if (!Number.isFinite(base5h) || base5h < 0 || !Number.isFinite(baseWeekly) || baseWeekly < 0) throw new Error('Task estimates must be finite and nonnegative');
     unoptimized5hTotal += base5h;
 
     const rem5h = isProExempt ? 100 : Math.max(0, reserveCeiling - running5h);
@@ -42,7 +46,7 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
     let rationale = 'Sufficient 5h & weekly headroom; execute full agentic loop.';
 
     if (
-      baseMode === 'RESERVE_STOP' ||
+      telemetryUnknown || baseMode === 'RESERVE_STOP' ||
       remWeekly < baseWeekly * 0.35 ||
       (!isProExempt && rem5h < base5h * 0.35)
     ) {
@@ -50,7 +54,7 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
       costMultiplier = 0;
       maxReadLines = 0;
       verification = 'skip-and-record-in-checkpoint';
-      rationale = `Deferred: Executing "${t.title}" would breach the 95% safety reserve (5h at ${running5h.toFixed(1)}%, weekly at ${runningWeekly.toFixed(1)}%).`;
+      rationale = `Deferred: Executing "${t.title}" would breach the 95% safety reserve (5h at ${running5h?.toFixed(1) ?? 'unknown'}%, weekly at ${runningWeekly?.toFixed(1) ?? 'unknown'}%).`;
     } else if (
       baseMode === 'CRITICAL_SURGICAL' ||
       t.priority === 'P2' ||
@@ -73,9 +77,14 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
       rationale = 'Compact execution: read <=150 lines per file, disable subagents, run single test file only.';
     }
 
-    const opt5h = Number((base5h * costMultiplier).toFixed(1));
-    const optWeekly = Number((baseWeekly * costMultiplier).toFixed(1));
+    let opt5h = Number((base5h * costMultiplier).toFixed(1));
+    let optWeekly = Number((baseWeekly * costMultiplier).toFixed(1));
 
+    if (action !== 'DEFER_UNTIL_RESET' && (running5h >= reserveCeiling || runningWeekly >= reserveCeiling || running5h + opt5h > reserveCeiling || runningWeekly + optWeekly > reserveCeiling)) {
+      action = 'DEFER_UNTIL_RESET'; opt5h = 0; optWeekly = 0; maxReadLines = 0; verification = 'skip-and-record-in-checkpoint';
+      rationale = 'Deferred: selected execution cost would exceed the reserve in at least one window.';
+    }
+    if (telemetryUnknown) rationale = 'Deferred: quota headroom is unknown or stale; refresh telemetry.';
     if (action !== 'DEFER_UNTIL_RESET') {
       running5h = Number(Math.min(100, running5h + opt5h).toFixed(1));
       runningWeekly = Number(Math.min(100, runningWeekly + optWeekly).toFixed(1));
@@ -99,6 +108,8 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
   });
 
   return {
+    telemetry_status: quotaReport.telemetry_status,
+    reserve_ceiling_percent: reserveCeiling,
     initial_5h_used_pct: quotaReport.primary_window_5h.used_percent,
     initial_weekly_used_pct: quotaReport.secondary_window_weekly.used_percent,
     unoptimized_total_5h_burn_pct: Number(unoptimized5hTotal.toFixed(1)),
@@ -112,13 +123,9 @@ export function scheduleTasksAgainstQuota(tasks, quotaReport) {
 function main() {
   const argv = process.argv.slice(2);
   let tasksJson = null;
-  let override5h = null;
-  let overrideWeekly = null;
 
   for (const arg of argv) {
     if (arg.startsWith('--tasks=')) tasksJson = arg.slice('--tasks='.length);
-    else if (arg.startsWith('--5h=')) override5h = Number(arg.split('=')[1]);
-    else if (arg.startsWith('--weekly=')) overrideWeekly = Number(arg.split('=')[1]);
   }
 
   const defaultTasks = [
@@ -133,37 +140,17 @@ function main() {
     try {
       parsedTasks = JSON.parse(tasksJson);
     } catch {
-      parsedTasks = defaultTasks;
+      throw new Error('Invalid tasks JSON');
     }
   }
 
-  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  const snapshot = findLatestRolloutSnapshot(codexHome) || {
-    plan_type: 'plus',
-    source: 'default_baseline',
-    captured_at: new Date().toISOString(),
-    primary_window: {
-      window_minutes: 300,
-      used_percent: override5h ?? 32,
-      resets_in_seconds: 10800,
-    },
-    secondary_window: {
-      window_minutes: 10080,
-      used_percent: overrideWeekly ?? 41,
-      resets_in_seconds: 388800,
-    },
-  };
-
-  if (override5h !== null) snapshot.primary_window.used_percent = override5h;
-  if (overrideWeekly !== null) snapshot.secondary_window.used_percent = overrideWeekly;
-
-  const report = buildAgentQuotaReport(snapshot);
+  const report = loadQuotaReport();
   const plan = scheduleTasksAgainstQuota(parsedTasks, report);
 
   process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  main();
+  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -33,3 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - Initial release of `$codex-quota-optimizer` (`SKILL.md`, `agents/openai.yaml`, `scripts/check_quota.mjs`, and `references/protocol_and_playbooks.md`) reading `primary_window` (5h, 300m) and `secondary_window` (weekly, 10080m) from OpenAI Codex session logs.
+
+## Reliability fixes (unreleased)
+
+- Replace legacy recommendations with current Sol/Luna task routing and separate reasoning settings.
+- Preserve missing/stale/expired/partial telemetry as unknown, age reset times, and select events by timestamp.
+- Share telemetry loading across CLI and MCP; fix Windows entry points and invalid input failures.
+- Check selected rounded task costs against both reserve ceilings; enforce reported limits for all plans.
+- Add fixture, missing-telemetry, MCP, mirror parity, and scheduler boundary regressions.
+- Add reproducible app dependencies, cross-platform scripts, skill packaging, and explicit publishing.

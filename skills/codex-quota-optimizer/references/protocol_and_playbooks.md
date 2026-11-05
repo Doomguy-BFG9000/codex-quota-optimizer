@@ -6,7 +6,7 @@ This reference document is loaded on demand by `$codex-quota-optimizer` when Cod
 
 ## 1. How `openai/codex` (`codex-rs`) Encodes Usage Limits
 
-In the `openai/codex` Rust codebase (`codex-rs/protocol/src/protocol.rs`), the backend returns a `RateLimitSnapshot` on every turn inside `EventMsg::TokenCount`:
+In the `openai/codex` Rust codebase (`codex-rs/protocol/src/protocol.rs`), local logs may contain a `RateLimitSnapshot` inside `EventMsg::TokenCount`:
 
 ```json
 {
@@ -31,8 +31,8 @@ In the `openai/codex` Rust codebase (`codex-rs/protocol/src/protocol.rs`), the b
 }
 ```
 
-- **`primary` (`window_minutes: 300`)**: The rolling **5-hour window**. Heavy multi-turn agentic loops with full-file reads and un-truncated test stdout can consume 15%–25% of this window in a single task.
-- **`secondary` (`window_minutes: 10080`)**: The rolling **7-day weekly window** (10,080 minutes). Even when the 5-hour window resets to `0%`, if `secondary.used_percent` hits `100%`, all Codex tasks fail with `HTTP 429 Too Many Requests` until the weekly reset timestamp.
+- **`primary` (`window_minutes: 300`)**: The rolling **5-hour window**. Usage depends on the task, model, and account.
+- **`secondary` (`window_minutes: 10080`)**: The rolling **7-day weekly window** (10,080 minutes). Treat reported usage and resets as observations, not a guarantee of future availability.
 
 ---
 
@@ -57,7 +57,7 @@ git diff -U1 src/targetFile.ts
 ```
 
 ### C. Truncated Test & Typecheck Execution
-Verbose test runner output (stack traces, passing test lists, webpack/vite bundle logs) is the #1 cause of 5-hour quota exhaustion in multi-turn loops. Always cap stdout:
+Cap verbose test output while preserving the underlying exit status:
 ```bash
 # Fast typecheck (only show first 25 error lines):
 npx tsc --noEmit 2>&1 | head -n 25
@@ -65,3 +65,5 @@ npx tsc --noEmit 2>&1 | head -n 25
 # Run only the single changed test file and show summary tail:
 npx tsx --test src/module.test.ts 2>&1 | tail -n 25
 ```
+
+Observations older than 15 minutes or past their reset are stale. Missing windows, timestamps, reset times, or unreadable logs remain unknown. Refresh telemetry before budgeted scheduling.

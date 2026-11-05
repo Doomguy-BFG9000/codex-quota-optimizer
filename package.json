@@ -1,16 +1,18 @@
 {
-  "name": "react-example",
+  "name": "codex-quota-optimizer",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "node server.ts",
+    "start": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/codex_skill.test.ts src/engine/quotaEngine.test.ts"
+    "test": "node --test tests/regressions.test.mjs && tsx --test tests/codex_skill.test.ts src/engine/quotaEngine.test.ts",
+    "test:skill": "node --test tests/regressions.test.mjs",
+    "sync:skill": "node scripts/sync-skill.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -29,10 +31,30 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "@types/express": "^4.17.21"
-  }
+  },
+  "description": "Offline Codex quota telemetry, task scheduling, and local simulator",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "skills/",
+    "install.sh",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "AGENTS.md",
+    "src/",
+    "server.ts",
+    "tsconfig.json",
+    "vite.config.ts",
+    "index.html",
+    "tests/",
+    "scripts/",
+    ".agents/skills/"
+  ]
 }

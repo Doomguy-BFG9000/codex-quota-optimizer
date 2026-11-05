@@ -1,11 +1,10 @@
 export type CodexPlanTier = 'plus' | 'pro' | 'team' | 'enterprise';
 
-export type ReasoningEffort = 'high' | 'medium' | 'low' | 'minimal';
+export type ReasoningEffort = 'high' | 'medium' | 'low';
 
 export type RecommendedModel =
-  | 'gpt-5-codex'
-  | 'gpt-5-codex-medium'
-  | 'codex-mini-latest';
+  | 'gpt-6.1-sol'
+  | 'gpt-6-luna';
 
 export type ExecutionMode =
   | 'full-agentic'
@@ -42,7 +41,7 @@ export interface PolicyThresholds {
   weeklyWarningPct: number; // default 70
   weeklyCriticalPct: number; // default 88
   reserveBufferPct: number; // default 5 (never let a single task hit 100%)
-  proExemptFiveHour: boolean; // Pro plans can bypass strict 5h throttling
+  proExemptFiveHour: boolean; // Deprecated compatibility field; reported limits always apply
 }
 
 export interface WorkOptimizationPolicy {
@@ -103,11 +102,15 @@ export const DEFAULT_THRESHOLDS: PolicyThresholds = {
   weeklyWarningPct: 70,
   weeklyCriticalPct: 88,
   reserveBufferPct: 5,
-  proExemptFiveHour: true,
+  proExemptFiveHour: false,
 };
 
+function reserveCeiling(reserve: number): number {
+  return Number.isFinite(reserve) ? Math.min(95, Math.max(0, 100 - reserve)) : 95;
+}
+
 function clampPct(val: number): number {
-  if (Number.isNaN(val)) return 0;
+  if (!Number.isFinite(val)) throw new Error('Simulator requires finite percentages');
   return Math.max(0, Math.min(100, Math.round(val * 10) / 10));
 }
 
@@ -122,13 +125,11 @@ export function evaluateQuotaPolicy(
   const primaryUsed = clampPct(snapshot.primary_window.used_percent);
   const secondaryUsed = clampPct(snapshot.secondary_window.used_percent);
 
-  const isProExempt =
-    thresholds.proExemptFiveHour &&
-    (snapshot.plan_type === 'pro' || snapshot.plan_type === 'enterprise');
+  const isProExempt = false; // Plan labels do not exempt reported limits.
 
   const rawFiveHourRemaining = Math.max(0, 100 - primaryUsed - thresholds.reserveBufferPct);
   const effectiveFiveHourRemainingPct = isProExempt
-    ? Math.max(rawFiveHourRemaining, 100 - thresholds.reserveBufferPct)
+    ? Math.max(rawFiveHourRemaining, reserveCeiling(thresholds.reserveBufferPct))
     : rawFiveHourRemaining;
 
   const effectiveWeeklyRemainingPct = Math.max(
@@ -158,12 +159,12 @@ export function evaluateQuotaPolicy(
   let governingWindow: 'primary_5h' | 'secondary_weekly' | 'balanced' = 'balanced';
 
   if (
-    (!isProExempt && primaryUsed >= 100 - thresholds.reserveBufferPct) ||
-    secondaryUsed >= 100 - thresholds.reserveBufferPct
+    (!isProExempt && primaryUsed >= reserveCeiling(thresholds.reserveBufferPct)) ||
+    secondaryUsed >= reserveCeiling(thresholds.reserveBufferPct)
   ) {
     constraintState = 'exhausted';
     governingWindow =
-      secondaryUsed >= 100 - thresholds.reserveBufferPct ? 'secondary_weekly' : 'primary_5h';
+      secondaryUsed >= reserveCeiling(thresholds.reserveBufferPct) ? 'secondary_weekly' : 'primary_5h';
   } else if (secondaryUsed >= thresholds.weeklyCriticalPct) {
     constraintState = 'weekly-critical';
     governingWindow = 'secondary_weekly';
@@ -192,8 +193,8 @@ export function evaluateQuotaPolicy(
         effectiveWeeklyRemainingPct: clampPct(effectiveWeeklyRemainingPct),
         fiveHourBurnRatio,
         weeklyBurnRatio,
-        reasoningEffort: 'minimal',
-        recommendedModel: 'codex-mini-latest',
+        reasoningEffort: 'low',
+        recommendedModel: 'gpt-6-luna',
         maxContextTokens: 8000,
         subagentConcurrency: 0,
         testVerificationMode: 'defer-heavy-suites',
@@ -215,14 +216,14 @@ export function evaluateQuotaPolicy(
         fiveHourBurnRatio,
         weeklyBurnRatio,
         reasoningEffort: 'low',
-        recommendedModel: 'codex-mini-latest',
+        recommendedModel: 'gpt-6-luna',
         maxContextTokens: 16000,
         subagentConcurrency: 1,
         testVerificationMode: 'syntax-and-typecheck',
         contextCompactionTriggerPct: 30,
         estimatedQuotaSavingsPct: 68,
         directives: [
-          'Weekly 7-day cap is critical: route routine edits and boilerplate to codex-mini-latest.',
+          'Weekly 7-day cap is critical: route routine edits and boilerplate to gpt-6-luna.',
           'Restrict reasoning_effort="low" and cap file reads to exact line ranges (sed/ripgrep).',
           'Defer non-P0 refactors and full integration test loops until weekly billing reset.',
         ],
@@ -237,7 +238,7 @@ export function evaluateQuotaPolicy(
         fiveHourBurnRatio,
         weeklyBurnRatio,
         reasoningEffort: 'low',
-        recommendedModel: 'codex-mini-latest',
+        recommendedModel: 'gpt-6-luna',
         maxContextTokens: 20000,
         subagentConcurrency: 1,
         testVerificationMode: 'syntax-and-typecheck',
@@ -259,7 +260,7 @@ export function evaluateQuotaPolicy(
         fiveHourBurnRatio,
         weeklyBurnRatio,
         reasoningEffort: 'medium',
-        recommendedModel: 'gpt-5-codex-medium',
+        recommendedModel: 'gpt-6.1-sol',
         maxContextTokens: 42000,
         subagentConcurrency: 2,
         testVerificationMode: 'affected-only',
@@ -281,7 +282,7 @@ export function evaluateQuotaPolicy(
         fiveHourBurnRatio,
         weeklyBurnRatio,
         reasoningEffort: 'medium',
-        recommendedModel: 'gpt-5-codex-medium',
+        recommendedModel: 'gpt-6.1-sol',
         maxContextTokens: 48000,
         subagentConcurrency: 2,
         testVerificationMode: 'affected-only',
@@ -304,7 +305,7 @@ export function evaluateQuotaPolicy(
         fiveHourBurnRatio,
         weeklyBurnRatio,
         reasoningEffort: 'high',
-        recommendedModel: 'gpt-5-codex',
+        recommendedModel: 'gpt-6.1-sol',
         maxContextTokens: 128000,
         subagentConcurrency: 4,
         testVerificationMode: 'full-suite',
@@ -327,15 +328,16 @@ export function optimizeTaskQueue(
   snapshot: CodexRateLimitSnapshot,
   thresholds: PolicyThresholds = DEFAULT_THRESHOLDS
 ): TaskQueueOptimizationResult {
+  for (const task of tasks) {
+    if (![task.baseFiveHourCostPct, task.baseWeeklyCostPct].every(v => Number.isFinite(v) && v >= 0)) throw new Error('Task estimates must be finite and nonnegative');
+  }
   const policy = evaluateQuotaPolicy(snapshot, thresholds);
-  const isProExempt =
-    thresholds.proExemptFiveHour &&
-    (snapshot.plan_type === 'pro' || snapshot.plan_type === 'enterprise');
+  const isProExempt = false; // Plan labels do not exempt reported limits.
 
   let runningFiveHourPct = clampPct(snapshot.primary_window.used_percent);
   let runningWeeklyPct = clampPct(snapshot.secondary_window.used_percent);
 
-  const maxAllowedPct = 100 - thresholds.reserveBufferPct;
+  const maxAllowedPct = reserveCeiling(thresholds.reserveBufferPct);
 
   let totalBaseFiveHourPct = 0;
   let totalOptimizedFiveHourPct = 0;
@@ -374,8 +376,8 @@ export function optimizeTaskQueue(
       (!isProExempt && remaining5h < task.baseFiveHourCostPct * 0.35)
     ) {
       executionMode = 'defer-until-5h-reset';
-      assignedModel = 'codex-mini-latest';
-      assignedReasoning = 'minimal';
+      assignedModel = 'gpt-6-luna';
+      assignedReasoning = 'low';
       multiplier = 0;
       actionSummary =
         remainingWeekly < task.baseWeeklyCostPct * 0.35
@@ -387,34 +389,38 @@ export function optimizeTaskQueue(
       task.priority === 'P2'
     ) {
       executionMode = 'mini-model-batch';
-      assignedModel = 'codex-mini-latest';
+      assignedModel = 'gpt-6-luna';
       assignedReasoning = 'low';
       multiplier = 0.38;
       actionSummary =
-        'Routed to codex-mini-latest with low reasoning effort and surgical line-range diffs (-62% quota).';
+        'Routed to gpt-6-luna with low reasoning effort and surgical line-range diffs (-62% quota).';
     } else if (
       policy.constraintState === '5h-warning' ||
       policy.constraintState === 'weekly-warning' ||
       remaining5h < task.baseFiveHourCostPct * 1.4
     ) {
       executionMode = 'compact-surgical';
-      assignedModel = 'gpt-5-codex-medium';
+      assignedModel = 'gpt-6.1-sol';
       assignedReasoning = 'medium';
       multiplier = 0.62;
       actionSummary =
         'Compacted context + medium reasoning + targeted module test execution (-38% quota).';
     } else {
       executionMode = 'full-agentic';
-      assignedModel = 'gpt-5-codex';
+      assignedModel = 'gpt-6.1-sol';
       assignedReasoning = task.complexity === 'high' ? 'high' : 'medium';
       multiplier = 0.88;
       actionSummary =
-        'Full gpt-5-codex reasoning with ripgrep-indexed context caching (-12% overhead).';
+        'Full gpt-6.1-sol reasoning with ripgrep-indexed context caching (-12% overhead).';
     }
 
-    const optimizedFiveHourCostPct = clampPct(task.baseFiveHourCostPct * multiplier);
-    const optimizedWeeklyCostPct = clampPct(task.baseWeeklyCostPct * multiplier);
+    let optimizedFiveHourCostPct = clampPct(task.baseFiveHourCostPct * multiplier);
+    let optimizedWeeklyCostPct = clampPct(task.baseWeeklyCostPct * multiplier);
 
+    if (runningFiveHourPct >= maxAllowedPct || runningWeeklyPct >= maxAllowedPct || runningFiveHourPct + optimizedFiveHourCostPct > maxAllowedPct || runningWeeklyPct + optimizedWeeklyCostPct > maxAllowedPct) {
+      executionMode = 'defer-until-5h-reset'; optimizedFiveHourCostPct = 0; optimizedWeeklyCostPct = 0;
+      actionSummary = 'Deferred: selected execution cost exceeds a window reserve.';
+    }
     const willFitCurrentWindow = executionMode !== 'defer-until-5h-reset';
 
     if (willFitCurrentWindow) {

@@ -1,134 +1,75 @@
-# codex-quota-optimizer (`v0.3.0`)
+# codex-quota-optimizer (v0.3.0)
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./CHANGELOG.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Security: 100% Offline](https://img.shields.io/badge/Security-Zero_Network_%7C_Zero_Credentials-emerald.svg)](#security--zero-friction-guarantees)
+Offline Codex quota observations and a deterministic task scheduler. The skill reads local rollout logs without network requests, credentials, or extra model calls. The optional web app is a simulator, not a live quota monitor.
 
-A **zero-friction, 100% offline OpenAI Codex Skill (`$codex-quota-optimizer`)** that combines **XS–XL task complexity classification** and **3-stage layered verification** with real-time local reading of OpenAI Codex's **5-hour rolling window (`primary_window`, 300m)** and **7-day weekly limit (`secondary_window`, 10080m)** from `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
+## Install
 
-- **Repository**: [`https://github.com/Thlookingatyou/codex-quota-optimizer`](https://github.com/Thlookingatyou/codex-quota-optimizer)
-- **Author**: [`@Thlookingatyou`](https://github.com/Thlookingatyou)
-- **Latest Release**: `v0.3.0` (See [`CHANGELOG.md`](./CHANGELOG.md))
+Node.js 22.12 or later is required. The skill itself has no npm dependencies.
 
----
-
-## Installation
-
-### Method 1: Standard `npx skills` CLI (Recommended)
-```bash
+```sh
 npx skills add Thlookingatyou/codex-quota-optimizer --skill codex-quota-optimizer
 ```
 
-### Method 2: Inside an OpenAI Codex Session (`$skill-installer`)
-```text
-$skill-installer install https://github.com/Thlookingatyou/codex-quota-optimizer/tree/main/skills/codex-quota-optimizer
+Or clone this repository and run `bash install.sh`. This copies the skill into `${CODEX_HOME:-$HOME/.codex}/skills`, appends the repository's lifecycle instructions to global `AGENTS.md` if absent, and registers the optional local MCP server in `config.toml`. Review these files before installing. Windows users can use Git Bash, or copy `skills/codex-quota-optimizer` into their Codex skills directory manually.
+
+## Read telemetry
+
+```sh
+node skills/codex-quota-optimizer/scripts/check_quota.mjs --format=json --task-size=M
+node skills/codex-quota-optimizer/scripts/check_quota.mjs --codex-home=/path/to/codex --format=json
+node skills/codex-quota-optimizer/scripts/check_quota.mjs --rollout-file=/path/to/rollout.jsonl --format=json
 ```
 
-### Method 3: Local Clone & `./install.sh`
-```bash
-git clone https://github.com/Thlookingatyou/codex-quota-optimizer.git
-cd codex-quota-optimizer
-chmod +x install.sh
-./install.sh
+The reader selects the newest event timestamp across readable `sessions/**/rollout-*.jsonl` files, not the most recently modified file. It supports `payload.rate_limits`, top-level `rate_limits`, and `msg.rate_limits`, with `primary`/`secondary` or `primary_window`/`secondary_window`. Only 300-minute and 10080-minute windows qualify. Named buckets other than `codex` are ignored because they may describe different model limits.
+
+Observations older than 15 minutes, invalid/future timestamps (over 60 seconds ahead), and expired reset times are stale. Relative resets are aged from the observation timestamp; absolute `resets_at` values use Unix seconds. An expired observation does not imply zero usage after a reset.
+
+Missing, unreadable, malformed, partial, or stale data produces `null` usage/headroom and `TELEMETRY_UNKNOWN`, with per-window status and the original observed usage when available. Unknown reset times remain `null`/`unknown`. Task sizing remains available; quota-budgeted scheduling defers until both windows are known. A known window at the reserve ceiling still triggers `RESERVE_STOP` even if the other window is missing.
+
+Explicit `--5h=`, `--weekly=`, `--5h-reset-sec=`, `--weekly-reset-sec=`, and `--plan=` values support controlled simulations. Environment equivalents are `CODEX_PRIMARY_USED_PCT`, `CODEX_WEEKLY_USED_PCT`, `CODEX_PRIMARY_RESET_SEC`, `CODEX_WEEKLY_RESET_SEC`, and `CODEX_PLAN_TYPE`. Overrides are identified as manual inputs, never live telemetry. A single override leaves the other window unknown if no valid observation exists. Invalid percentages fail with a nonzero exit code.
+
+## Model guidance
+
+Checked against [official OpenAI model guidance](https://learn.chatgpt.com/docs/models?surface=cli) on November 5, 2026. XS/S tasks recommend `gpt-6-luna` with high reasoning; M/L recommend `gpt-6.1-sol` with medium reasoning; XL recommends Sol with high reasoning. These are project heuristics. Astra is an option for demanding work and Terra for writing/visual tasks; account and client availability must be checked before switching. Recommendations do not change the active model.
+
+Model IDs and reasoning effort are separate settings. Legacy `gpt-5-codex`, invented effort-suffixed IDs, and `codex-mini-latest` are no longer recommended. No fixed token saving or allowance multiplier is guaranteed.
+
+## Schedule tasks
+
+```sh
+node skills/codex-quota-optimizer/scripts/optimize_work_plan.mjs --5h=88 --weekly=45 --tasks='[{"title":"Fix crash","priority":"P0","est_5h_pct":12,"est_weekly_pct":3}]'
 ```
 
----
+Tasks sort P0, P1, P2 while preserving order within a priority. Estimates must be finite and nonnegative. Defaults are 10 percentage points for 5h and 24% of that estimate for weekly. Execution tiers use illustrative cost multipliers (full .88, compact .62, minimal .38). Each selected cost is rounded to one decimal and checked against **both** projected windows before accepting a task. Deferred work consumes zero estimated budget. A task may end exactly at 95%; subsequent work defers.
 
-## Why This Project Exists & How It Compares
+Both schedulers enforce a ceiling of at most 95%. `CODEX_QUOTA_RESERVE_PCT` can request a larger reserve. Reported limits apply to all plans, including Pro and Enterprise; plan names do not grant exemptions. These estimates cannot prevent actual server-side rate limits. Recheck telemetry between tasks.
 
-Most quota savers for OpenAI Codex only provide **static prompt advice** (e.g., "use a smaller model for XS tasks"), without knowing whether your 5-hour or weekly quota is currently at **15%** or **92%**. Conversely, checking `/status` manually requires human intervention before every prompt.
+The MCP wrapper exposes `get_codex_usage_limits` and `optimize_codex_task_plan` with the same reader and scheduler, including missing-telemetry behavior:
 
-`Thlookingatyou/codex-quota-optimizer` (`v0.3.0`) bridges both worlds—combining **zero-friction XS–XL task complexity sizing** with **verifiable, offline local telemetry from `codex-rs` rollout logs**:
-
-| Capability | Manual `/status` | Static Heuristics (`ctdaniel/codex-quota-optimizer`) | `Thlookingatyou/codex-quota-optimizer` (`v0.3.0`) |
-| :--- | :--- | :--- | :--- |
-| **Zero Extra LLM Calls** | Yes | Yes | **Yes** (Deterministic local script) |
-| **Zero Network / Zero Auth Token Access** | Yes | Yes | **Yes** (100% offline read-only; never touches `auth.json`) |
-| **XS–XL Task Complexity Sizing** | No | Yes (`XS`–`XL`) | **Yes** (`--task-size=XS\|S\|M\|L\|XL`) |
-| **3-Stage Layered Verification** | No | Yes | **Yes** (Static -> Targeted Unit Test -> Gated Full Suite) |
-| **Reads Real 5-Hour (`300m`) & Weekly (`10080m`) Limits** | Manual TUI only | No (Blind to actual remaining %) | **Yes** (Reads local `~/.codex/sessions/**/rollout-*.jsonl`) |
-| **Multi-Step Queue Scheduler & Pre-429 Checkpoint** | No | No | **Yes** (`optimize_work_plan.mjs` + 95% reserve handoff) |
-
----
-
-## How Local 5h & Weekly Telemetry Works (Verify It Yourself in 5 Seconds)
-
-Does OpenAI Codex actually store 5-hour and weekly usage percentages locally on disk? **Yes.**
-
-In the official [`openai/codex`](https://github.com/openai/codex) Rust repository (`codex-rs/protocol/src/protocol.rs`), `codex-core` records a `RateLimitSnapshot` inside `EventMsg::TokenCount` on every turn and appends it to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`:
-
-```rust
-// From openai/codex: codex-rs/protocol/src/protocol.rs
-pub struct RateLimitSnapshot {
-    pub primary: Option<RateLimitWindow>,   // window_minutes: 300 (5-hour rolling limit)
-    pub secondary: Option<RateLimitWindow>, // window_minutes: 10080 (7-day weekly limit)
-}
-pub struct RateLimitWindow {
-    pub used_percent: f64,
-    pub window_minutes: Option<u64>,
-    pub resets_in_seconds: Option<u64>,
-}
+```sh
+node skills/codex-quota-optimizer/scripts/mcp_server.mjs
 ```
 
-You can verify this on your own machine right now without installing anything:
+## Develop and verify
 
-```bash
-# Inspect the latest rate_limits event written by OpenAI Codex on your machine:
-grep -h '"rate_limits"' ~/.codex/sessions/*/*/*/rollout-*.jsonl | tail -n 1
+```sh
+npm ci
+npm run lint
+npm test
+npm run build
+npm run dev
 ```
 
-`scripts/check_quota.mjs` simply reads the last matching line from `~/.codex/sessions/**/rollout-*.jsonl` (falling back gracefully to pure `XS`–`XL` task sizing if no rollout logs exist yet).
+`npm start` runs the same local TypeScript server. For production, build first and set `NODE_ENV=production`. Starting the server never publishes a repository; publishing requires an explicit action in the app.
 
----
+The dependency-free regressions can run without installing the web app:
 
-## Security & Zero-Friction Guarantees
-
-1. **No Credential Access**: `check_quota.mjs` **never** reads `~/.codex/auth.json`, environment API keys, or git credentials.
-2. **No Outbound Network Calls**: There are zero `fetch()`, `http`, or socket calls in the skill scripts.
-3. **Zero Dependencies**: Written in pure Node.js ESM (`node:fs`, `node:path`, `node:os`) with an automated test suite (`npm test` / `npx tsx --test tests/codex_skill.test.ts`).
-
----
-
-## XS–XL Task Complexity × Quota Matrix
-
-When Codex runs `node skills/codex-quota-optimizer/scripts/check_quota.mjs --task-size=<XS|S|M|L|XL>`, it receives a unified routing and verification directive:
-
-1. **`XS` (1 file, <25 lines — typos, config, docs)**:
-   - Model: `codex-mini-latest` (`reasoning_effort="low"` or `"minimal"`).
-   - Verification: **Layer 1 only** (`git diff` / syntax check).
-2. **`S` (1–2 files, <80 lines — isolated bugfix, helper)**:
-   - Model: `gpt-5-codex` (`reasoning_effort="low"`), stepping down to `codex-mini-latest` when `5h >= 65%` or `weekly >= 70%`.
-   - Verification: **Layer 1 + Layer 2** (run only the single corresponding unit test file, truncated via `| tail -n 25`).
-3. **`M` (2–4 files, 80–250 lines — standard feature or refactor)**:
-   - Model: `gpt-5-codex` (`reasoning_effort="medium"`), stepping down to `"low"` when quota enters `WARNING_CONSERVE` (`>= 65%`).
-   - Verification: **Layer 1 + Layer 2** (affected module tests only).
-4. **`L` / `XL` (5+ files — cross-module feature, architecture, deep debugging)**:
-   - Model: `gpt-5-codex` (`reasoning_effort="high"` when nominal; `"medium"` in warning; decomposed into checkpointed phases in critical).
-   - Verification: **Layers 1–2** after each milestone; **Layer 3** (full test suite) only at the final gate if quota is `NOMINAL`.
-
----
-
-## Repository Structure
-
-```text
-.
-├── AGENTS.md                                              # Global/Repo instructions for OpenAI Codex
-├── CHANGELOG.md                                           # Release history (v0.1.0 -> v0.3.0)
-├── LICENSE                                                # MIT License
-├── README.md                                              # Documentation & verification guide
-├── install.sh                                             # Local installer for ~/.codex/skills/
-├── .agents/skills/codex-quota-optimizer/                  # Auto-discovered repo-scoped skill mirror
-├── skills/
-│   └── codex-quota-optimizer/                             # Official OpenAI Codex Skill package
-│       ├── SKILL.md                                       # Skill manifest & XS-XL / 5h-weekly rules
-│       ├── agents/
-│       │   └── openai.yaml                                # Codex UI & implicit invocation config
-│       ├── scripts/
-│       │   ├── check_quota.mjs                            # Offline 5h & weekly rollout parser + XS-XL router
-│       │   ├── optimize_work_plan.mjs                     # Multi-step P0-P2 task queue scheduler
-│       │   └── mcp_server.mjs                             # Optional local stdio MCP wrapper
-│       └── references/
-│           └── protocol_and_playbooks.md                  # Low-token shell playbooks (rg + sed slices)
-└── tests/
-    └── codex_skill.test.ts                                # Automated node:test verification suite
+```sh
+npm run test:skill
 ```
+
+Tests include fixture JSONL events, missing telemetry through both CLIs and MCP, stale/expired resets, timestamp ordering, invalid inputs, model routing, and reserve boundaries in both schedulers. `tests/fixtures/rate-limits.json` is a synthetic event with a fixed clock in tests. Manual CLI tests should use fresh timestamps or explicit overrides.
+
+`skills/codex-quota-optimizer` is canonical. Run `npm run sync:skill` after changes; tests verify `.agents/skills/codex-quota-optimizer` matches byte for byte. `npm pack --dry-run` checks distribution contents, including the skill, app sources, and tests. The lockfile pins its dependency tree.
+
+MIT license. Repository: [Thlookingatyou/codex-quota-optimizer](https://github.com/Thlookingatyou/codex-quota-optimizer).

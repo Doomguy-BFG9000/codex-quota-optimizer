@@ -31,7 +31,7 @@ In the official [\`openai/codex\`](https://github.com/openai/codex) architecture
 ### What \`openai/codex\` Currently Does Wrong
 While \`codex-tui\` and \`codex-core\` receive \`rate_limit_snapshot\` payloads from the backend and persist them to \`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl\` (and display them to humans via \`/status\`), **the Codex agent executing a task has zero visibility into its own remaining 5-hour or weekly quota**.
 
-As a result, Codex blindly runs \`gpt-5-codex\` with \`reasoning_effort="high"\`, spawns parallel exploration subagents, and runs full test suites at **94% quota utilization**—crashing mid-refactor with \`429 Too Many Requests\` and leaving the working tree dirty.
+As a result, Codex blindly runs \`gpt-6.1-sol\` with \`reasoning_effort="high"\`, spawns parallel exploration subagents, and runs full test suites at **94% quota utilization**—crashing mid-refactor with \`429 Too Many Requests\` and leaving the working tree dirty.
 
 ---
 
@@ -107,9 +107,9 @@ You have access to the \`quota_pilot\` MCP server, which exposes real-time telem
 
 | Window State | 5-Hour (\`300m\`) | Weekly (\`10080m\`) | Required Agent Behavior |
 | :--- | :--- | :--- | :--- |
-| **Nominal** | \`< ${thresholds.fiveHourWarningPct}%\` | \`< ${thresholds.weeklyWarningPct}%\` | Full high-reasoning exploration (\`gpt-5-codex\`, \`reasoning_effort="high"\`), up to 4 concurrent subagents, full test suite runs. |
+| **Nominal** | \`< ${thresholds.fiveHourWarningPct}%\` | \`< ${thresholds.weeklyWarningPct}%\` | Full high-reasoning exploration (\`gpt-6.1-sol\`, \`reasoning_effort="high"\`), up to 4 concurrent subagents, full test suite runs. |
 | **Warning** | \`${thresholds.fiveHourWarningPct}% – ${thresholds.fiveHourCriticalPct - 1}%\` | \`${thresholds.weeklyWarningPct}% – ${thresholds.weeklyCriticalPct - 1}%\` | Step down to \`reasoning_effort="medium"\`. Use \`ripgrep\` (\`rg -n\`) with targeted line slices instead of full-file reads. Run unit tests only on modified files. |
-| **Critical** | \`${thresholds.fiveHourCriticalPct}% – ${100 - thresholds.reserveBufferPct - 1}%\` | \`${thresholds.weeklyCriticalPct}% – ${100 - thresholds.reserveBufferPct - 1}%\` | Route routine edits to \`codex-mini-latest\` with \`reasoning_effort="low"\`. Trigger \`/compact\` if context > 20k tokens. Verify via \`tsc --noEmit\` only; defer heavy E2E suites. |
+| **Critical** | \`${thresholds.fiveHourCriticalPct}% – ${100 - thresholds.reserveBufferPct - 1}%\` | \`${thresholds.weeklyCriticalPct}% – ${100 - thresholds.reserveBufferPct - 1}%\` | Route routine edits to \`gpt-6-luna\` with \`reasoning_effort="low"\`. Trigger \`/compact\` if context > 20k tokens. Verify via \`tsc --noEmit\` only; defer heavy E2E suites. |
 | **Reserve Cap** | \`>= ${100 - thresholds.reserveBufferPct}%\` | \`>= ${100 - thresholds.reserveBufferPct}%\` | **STOP BEFORE HTTP 429**: Commit clean WIP state, write \`AGENTS.checkpoint.md\` with exact resumption steps and reset timestamp, and exit cleanly. |
 
 ## Current Configured Snapshot Baseline
@@ -297,8 +297,8 @@ export function computeTaskOptimizationPolicy(
   if ((!isProExempt && pUsed >= reserveCeiling) || sUsed >= reserveCeiling) {
     return {
       status: 'exhausted',
-      reasoning_effort: 'minimal',
-      recommended_model: 'codex-mini-latest',
+      reasoning_effort: 'low',
+      recommended_model: 'gpt-6-luna',
       max_context_tokens: 8000,
       subagent_concurrency: 0,
       action: 'CHECKPOINT_AND_PAUSE_UNTIL_RESET',
@@ -309,7 +309,7 @@ export function computeTaskOptimizationPolicy(
     return {
       status: 'critical',
       reasoning_effort: 'low',
-      recommended_model: 'codex-mini-latest',
+      recommended_model: 'gpt-6-luna',
       max_context_tokens: 18000,
       subagent_concurrency: 1,
       action: 'SURGICAL_DIFFS_AND_TYPECHECK_ONLY',
@@ -320,7 +320,7 @@ export function computeTaskOptimizationPolicy(
     return {
       status: 'warning',
       reasoning_effort: 'medium',
-      recommended_model: 'gpt-5-codex-medium',
+      recommended_model: 'gpt-6.1-sol',
       max_context_tokens: 48000,
       subagent_concurrency: 2,
       action: 'COMPACT_CONTEXT_AND_AFFECTED_TESTS_ONLY',
@@ -330,7 +330,7 @@ export function computeTaskOptimizationPolicy(
   return {
     status: 'nominal',
     reasoning_effort: 'high',
-    recommended_model: 'gpt-5-codex',
+    recommended_model: 'gpt-6.1-sol',
     max_context_tokens: 128000,
     subagent_concurrency: 4,
     action: 'FULL_AGENTIC_VERIFICATION',

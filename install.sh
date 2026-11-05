@@ -20,7 +20,7 @@ cp -R "$REPO_ROOT/skills/codex-quota-optimizer/"* "$REPO_ROOT/.agents/skills/cod
 GLOBAL_AGENTS_MD="$CODEX_HOME_DIR/AGENTS.md"
 if [ ! -f "$GLOBAL_AGENTS_MD" ] || ! grep -q "codex-quota-optimizer" "$GLOBAL_AGENTS_MD" 2>/dev/null; then
   cat "$REPO_ROOT/AGENTS.md" >> "$GLOBAL_AGENTS_MD"
-  echo "==> Updated $GLOBAL_AGENTS_MD with $codex-quota-optimizer lifecycle rules"
+  echo "==> Updated $GLOBAL_AGENTS_MD with codex-quota-optimizer lifecycle rules"
 fi
 
 # Register optional MCP server in ~/.codex/config.toml
