@@ -12,9 +12,7 @@
     "lint": "tsc --noEmit",
     "test": "node --test tests/regressions.test.mjs && tsx --test tests/codex_skill.test.ts src/engine/quotaEngine.test.ts",
     "test:skill": "node --test tests/regressions.test.mjs",
-    "sync:skill": "node scripts/sync-skill.mjs",
-    "demo": "node scripts/demo.mjs",
-    "demo:preview": "node scripts/demo.mjs --write-preview"
+    "sync:skill": "node scripts/sync-skill.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -57,8 +55,6 @@
     "index.html",
     "tests/",
     "scripts/",
-    ".agents/skills/",
-    "CONTRIBUTING.md",
-    "docs/"
+    ".agents/skills/"
   ]
 }
